@@ -2,15 +2,13 @@
 #include <fstream>
 
 
+
 using namespace std;
-/// вектор, содержащий box-ы, €вл€ющиес€ частью рабочего пространства
-vector<Box> solution;
-/// вектор, содержащий box-ы, не €вл€ющиес€ частью рабочего пространства
-vector<Box> not_solution;
-/// вектор, содержащий box-ы, наход€щиес€ на границе между "рабочим" и "нерабочим" пространством
-vector<Box> boundary;
-/// вектор, хран€щий box-ы, анализируемые на следующей итерации алгоритма
-vector<Box> temporary_boxes;
+
+cilk::reducer<cilk::op_vector<Box>>solution;
+cilk::reducer<cilk::op_vector<Box>>not_solution;
+cilk::reducer<cilk::op_vector<Box>>boundary;
+cilk::reducer<cilk::op_vector<Box>>temporary_boxes;
 
 using namespace std;
 /// функции gj()
@@ -145,19 +143,19 @@ void low_level_fragmentation::GetBoxType(const Box& box)
 	type = ClasifyBox(vecs);
 
 	if (type == 0) //”бираем пр€моугольник из рассмотрени€
-		not_solution.push_back(box);
+		not_solution->push_back(box);
 
 	if (type == 1) //ѕр€моугольник, в котором есть решение (нужный экстремум)
-		solution.push_back(box);
+		solution->push_back(box);
 
 	if (type == 2) { //ѕр€моугольник, который надо разбить
 		GetNewBoxes(box, pair);
-		temporary_boxes.push_back(pair.first);
-		temporary_boxes.push_back(pair.second);
+		temporary_boxes->push_back(pair.first);
+		temporary_boxes->push_back(pair.second);
 	}
 
-	if (type == 3) //ѕригр
-		boundary.push_back(box);
+	if (type == 3) //√раница
+		boundary->push_back(box);
 }
 //------------------------------------------------------------------------------------------
 high_level_analysis::high_level_analysis(double& min_x, double& min_y, double& x_width, double& y_height) :
@@ -240,23 +238,26 @@ void high_level_analysis::GetMinMax(const Box& box, min_max_vectors& min_max_vec
 //------------------------------------------------------------------------------------------
 void high_level_analysis::GetSolution()
 {
-	//должны фигурировать два вложенных цикла. ¬нешний цикл проходит по всем уровн€м двоичного дерева разбиени€. 
-	//¬ рамках внутреннего цикла происходит перебор всех box-ов текущего уровн€ разбиени€ и определение типа box-а 
-	//(€вл€етс€ он частью рабочего пространства либо не €вл€етс€, лежит он на границе или подлежит дальнейшему анализу). 
-
+	// ќпределили функцию
 	int length = FindTreeDepth() + 1;
 	boxes_pair pair;
-	temporary_boxes.push_back(current_box);
+	temporary_boxes->push_back(current_box);
 
-	for (int i = 0; i < length; i++) {
-		int number_of_box_on_level = temporary_boxes.size();
-		vector<Box> curr_boxes(temporary_boxes);
-		temporary_boxes.clear();
-		for (int j = 0; j < number_of_box_on_level; j++) {
+	for (int i = 0; i < length; i++)
+	{
+		vector<Box> tmp;
+		temporary_boxes.move_out(tmp);
+		int number_of_box_on_level = tmp.size();
+		vector<Box> curr_boxes(tmp);
+		tmp.clear();
+		temporary_boxes.set_value(tmp);
+		cilk_for(int j = 0; j < number_of_box_on_level; j++)
+		{
 			GetBoxType(curr_boxes[j]);
 		}
 	}
 }
+
 //------------------------------------------------------------------------------------------
 void WriteResults(const char* file_names[])
 {
